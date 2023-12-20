@@ -1,0 +1,74 @@
+#cloud-config
+write_files:
+- path: /opt/bingo/config.yaml
+  content: |
+    student_email: <email>
+    postgres_cluster:
+      hosts:
+      - address: <host>
+        port: 5432
+      user: <postgres_user>
+      password: <postgres_pw>
+      db_name: <postgres_db>
+      ssl_mode: disable
+      use_closest_node: false
+- path: /opt/bongo/logs/<log_folder>/main.log
+  owner: 'ubuntu:ubuntu'
+  permissions: '0644'
+  defer: true
+- path: /etc/systemd/system/bingo.service
+  content: |
+    [Unit]
+    Description=BingoApp
+
+    [Service]
+    Type=notify-reload
+    User=ubuntu
+    ExecStart=/opt/bingo/bingo run_server
+    OOMScoreAdjust=1000
+    Restart=always
+    RestartSec=1
+
+    [Install]
+    WantedBy=multi-user.target
+- path: /opt/bingo/app_autoheal.py
+  content: |
+    import os
+    import time
+    import requests
+    from requests.exceptions import ConnectionError
+
+    def main(url):
+        while True:
+            try:
+                r = requests.get(url, timeout=1)
+                if r.status_code != 200:
+                    print("Приложение чувствует себя плохо. Перезапускаем...")
+                    os.system("systemctl restart bingo")
+                    time.sleep(10)
+            except ConnectionError:
+                print("Сервер не отвечает. Подождем немного...")
+                time.sleep(5)
+            time.sleep(5)
+    
+    if __name__ == "__main__":
+        url = "http://localhost:<port>/ping"
+        main(url)
+- path: /etc/systemd/system/bingo-autoheal.service
+  content: |
+    [Unit]
+    Description=BingoAutoheal
+
+    [Service]
+    ExecStart=/usr/bin/python3 -u /opt/bingo/app_autoheal.py
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+
+runcmd:
+  - [wget, 'https://storage.yandexcloud.net/final-homework/bingo', -P, /opt/bingo]
+  - [chmod, 755, /opt/bingo/bingo]
+  - systemctl enable --no-block bingo bingo-autoheal
+  - systemctl start --no-block bingo bingo-autoheal
